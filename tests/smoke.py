@@ -10,6 +10,13 @@ import time
 import urllib.error
 import urllib.request
 
+# CI Windows 控制台默认 cp1252, 中文 print 会崩 → 强制 UTF-8 输出
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
