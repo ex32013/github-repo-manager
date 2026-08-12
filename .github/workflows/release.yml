@@ -46,7 +46,19 @@ jobs:
 
       # 冒烟测试: 源码模式启动服务器验证关键接口(在打包前拦截回归)
       - name: Smoke test
-        run: python tests/smoke.py
+        id: smoke
+        run: |
+          python tests/smoke.py 2>&1 | tee smoke-report.txt
+          exit ${PIPESTATUS[0]}
+        shell: bash
+
+      - name: Upload smoke report (on failure)
+        if: failure() && steps.smoke.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smoke-report-${{ matrix.os }}
+          path: smoke-report.txt
+          if-no-files-found: warn
 
       - name: Build (Windows)
         run: |
