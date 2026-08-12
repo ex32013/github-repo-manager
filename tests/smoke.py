@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """冒烟测试: 启动 server 验证关键接口与安全防护。
 运行: python tests/smoke.py
 """
@@ -30,8 +30,8 @@ def start_server():
     try:
         srv = server.ThreadingHTTPServer(("127.0.0.1", PORT), server.Handler)
     except OSError as e:
-        print("FATAL: 无法绑定端口 %d: %s" % (PORT, e))
-        print("当前占用 18995 端口的进程:")
+        print("FATAL: cannot bind port %d: %s" % (PORT, e))
+        print("Processes listening on %d:" % PORT)
         if os.name == "nt":
             os.system('netstat -ano | findstr ":%d"' % PORT)
         sys.exit(3)
@@ -62,25 +62,25 @@ def main():
         # 1. 主页 200 且含 html
         st, body = http("/")
         if st != 200 or b"<html" not in body.lower():
-            fails.append("主页 200 失败: %d" % st)
+            fails.append("home 200 failed: %d" % st)
 
         # 2. 设置接口返回合法结构
         st, body = http("/api/settings")
         if st != 200:
-            fails.append("/api/settings 状态码 %d" % st)
+            fails.append("/api/settings status %d" % st)
         else:
             d = json.loads(body)
             if not isinstance(d.get("credentials"), list):
-                fails.append("settings.credentials 不是列表")
+                fails.append("settings.credentials not list")
 
         # 3. 仓库扫描接口(未配置根目录时至少 200 且 repos 是列表)
         st, body = http("/api/repos")
         if st != 200:
-            fails.append("/api/repos 状态码 %d" % st)
+            fails.append("/api/repos status %d" % st)
         else:
             d = json.loads(body)
             if not isinstance(d.get("repos"), list):
-                fails.append("repos 不是列表")
+                fails.append("repos not list")
 
         # 4. CSRF: 恶意 Origin(127.0.0.1.evil.com)写操作被拒
         st, body = http("/api/settings", method="POST",
@@ -88,7 +88,7 @@ def main():
                         headers={"Content-Type": "application/json",
                                  "Origin": "http://127.0.0.1.evil.com"})
         if st != 403:
-            fails.append("恶意Origin应403, 实际 %d" % st)
+            fails.append("evil origin expected 403, got %d" % st)
 
         # 5. 正常本机 Origin 放行
         st, body = http("/api/settings", method="POST",
@@ -96,64 +96,64 @@ def main():
                         headers={"Content-Type": "application/json",
                                  "Origin": "http://127.0.0.1:%d" % PORT})
         if st != 200:
-            fails.append("本机Origin应200, 实际 %d" % st)
+            fails.append("local origin expected 200, got %d" % st)
 
         # 6. 超大 body 被拒(413 或连接被拒皆视为防护生效; Windows 网络栈差异)
         st, _ = http("/api/settings", method="POST", body="x" * (2 * 1024 * 1024),
                      headers={"Content-Type": "application/json"})
         if st not in (413, -1):   # -1 = 连接重置/异常, 同样表示被拒
-            fails.append("超大body应413或拒绝, 实际 %d" % st)
+            fails.append("huge body expected 413/reject, got %d" % st)
 
         # 7. 非法 JSON 容错(不 500)
         st, _ = http("/api/settings", method="POST", body="not-json",
                      headers={"Content-Type": "application/json"})
         if st != 200:
-            fails.append("非法JSON应200, 实际 %d" % st)
+            fails.append("bad json expected 200, got %d" % st)
 
         # 8. token 校验: 无 token 的写操作... 本机模式无 token 也放行(设计如此), 只验证不 500
         st, _ = http("/api/release", method="POST", body=json.dumps({"path": "/nonexist", "version": "v9.9.9"}),
                      headers={"Content-Type": "application/json"})
         if st != 200:  # 批量发版接口对不存在仓库返回 200 + ok:False
-            fails.append("不存在仓库发版应200(ok:false), 实际 %d" % st)
+            fails.append("missing repo release expected 200(ok:false), got %d" % st)
 
         # 9. 批量发版: 空列表应 400
         st, _ = http("/api/release", method="POST", body=json.dumps({"paths": [], "version": "v9.9.9"}),
                      headers={"Content-Type": "application/json"})
         if st != 400:
-            fails.append("空paths发版应400, 实际 %d" % st)
+            fails.append("empty paths release expected 400, got %d" % st)
 
         # 10. 云端仓库接口: 无凭据时返回结构合法
         st, body = http("/api/cloud-repos")
         if st != 200:
-            fails.append("/api/cloud-repos 状态码 %d" % st)
+            fails.append("/api/cloud-repos status %d" % st)
         else:
             d = json.loads(body)
             if not isinstance(d.get("repos"), list):
-                fails.append("cloud-repos.repos 不是列表")
+                fails.append("cloud-repos.repos not list")
             if "has_credentials" not in d:
-                fails.append("cloud-repos 缺 has_credentials")
+                fails.append("cloud-repos missing has_credentials")
 
         # 11. 克隆接口: 非法 url 不 500
         st, _ = http("/api/clone", method="POST", body=json.dumps({"url": "", "dir": ""}),
                      headers={"Content-Type": "application/json"})
         if st != 400:
-            fails.append("空url克隆应400, 实际 %d" % st)
+            fails.append("empty url clone expected 400, got %d" % st)
 
         # 12. config 接口返回 home_dir
         st, body = http("/api/config")
         if st != 200:
-            fails.append("/api/config 状态码 %d" % st)
+            fails.append("/api/config status %d" % st)
         else:
             d = json.loads(body)
             if not d.get("home_dir"):
-                fails.append("config 缺 home_dir")
+                fails.append("config missing home_dir")
 
         if fails:
             print("SMOKE FAILED:")
             for f in fails:
                 print("  -", f)
             sys.exit(1)
-        print("SMOKE OK: 主页/API/CSRF/body限制/批量/云端/克隆 全部通过")
+        print("SMOKE OK: home/API/CSRF/body-limit/batch/cloud/clone all passed")
     finally:
         srv.shutdown()
 
