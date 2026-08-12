@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GitHub Repo Manager</title>
+<style>
+:root {
+  --bg: #0f172a; --panel: #1e293b; --border: #334155; --fg: #e2e8f0;
+  --muted: #94a3b8; --blue: #3b82f6; --green: #22c55e; --red: #ef4444; --amber: #f59e0b;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; }
+header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border); }
+header h1 { font-size: 16px; margin: 0; flex: 1; }
+.tabs { display: flex; gap: 8px; }
+.tab { background: none; border: 1px solid transparent; color: var(--muted); padding: 6px 14px; cursor: pointer; border-radius: 6px; }
+.tab.active { color: var(--fg); border-color: var(--border); background: #283548; }
+main { padding: 20px; max-width: 1100px; margin: 0 auto; }
+.btn { background: var(--blue); color: #fff; border: 0; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
+.btn.small { padding: 3px 10px; font-size: 12px; }
+.btn.ghost { background: none; color: var(--fg); border: 1px solid var(--border); }
+.btn.danger { background: none; color: var(--red); border: 1px solid var(--red); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 10px; overflow: hidden; }
+th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
+th { color: var(--muted); font-weight: 500; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.badge.ok { background: rgba(34,197,94,.15); color: var(--green); }
+.badge.fail { background: rgba(239,68,68,.15); color: var(--red); }
+.badge.run { background: rgba(245,158,11,.15); color: var(--amber); }
+.badge.na { background: rgba(148,163,184,.15); color: var(--muted); }
+.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--muted); }
+.warn { background: rgba(245,158,11,.1); border: 1px solid rgba(245,158,11,.4); color: var(--amber); padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; }
+.setting-group { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.setting-group h3 { margin: 0 0 10px; font-size: 14px; }
+label { display: block; color: var(--muted); font-size: 12px; margin: 10px 0 4px; }
+textarea, input[type=text], input[type=password], select { width: 100%; background: #0b1220; color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font: inherit; }
+.cred-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.cred-row input { flex: 1; min-width: 120px; }
+.btn-row { margin-top: 14px; display: flex; gap: 10px; align-items: center; }
+#banner { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); padding: 10px 18px; border-radius: 8px; z-index: 99; display: none; max-width: 80%; }
+#banner.ok { background: rgba(34,197,94,.2); border: 1px solid var(--green); color: var(--green); }
+#banner.warn { background: rgba(239,68,68,.2); border: 1px solid var(--red); color: var(--red); }
+#loading { color: var(--muted); padding: 40px; text-align: center; }
+.modal-back { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 50; }
+.modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; width: 420px; max-width: 92%; }
+.modal h3 { margin: 0 0 14px; }
+.empty { color: var(--muted); text-align: center; padding: 30px; }
+a { color: var(--blue); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="appTitle">GitHub 多仓库管理器</h1>
+  <div class="tabs">
+    <button class="tab active" id="tabRepos">仓库</button>
+    <button class="tab" id="tabSettings">设置</button>
+  </div>
+  <button class="btn" id="btnRefresh">刷新</button>
+</header>
+
+<div id="banner"></div>
+<main>
+  <div id="viewRepos">
+    <div class="warn" id="noCredsWarn" style="display:none"></div>
+    <div id="loading">加载中…</div>
+    <div id="reposWrap" style="display:none">
+      <table>
+        <thead><tr>
+          <th id="hRepo">仓库</th>
+          <th id="hLocal">本地</th>
+          <th id="hRemote">远端</th>
+          <th id="hAhead">未推送</th>
+          <th id="hActions">Actions</th>
+          <th id="hRelease">最新版本</th>
+          <th id="hDirty">本地改动</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="reposBody"></tbody>
+      </table>
+      <div class="empty" id="noRepos" style="display:none"></div>
+    </div>
+  </div>
+
+  <div id="viewSettings" style="display:none">
+    <div class="setting-group">
+      <h3 id="sRootsTitle">扫描根目录</h3>
+      <label id="lRoots">每行一个目录路径, 递归扫描其下的 git 仓库</label>
+      <textarea id="cfgRootDirs" rows="4" placeholder="C:\projects"></textarea>
+      <h3 id="sManualTitle" style="margin-top:16px">手工仓库</h3>
+      <label id="lManual">每行一个仓库绝对路径</label>
+      <textarea id="cfgManualRepos" rows="3"></textarea>
+    </div>
+    <div class="setting-group">
+      <h3 id="sCredTitle">凭据</h3>
+      <div id="credWarn" class="warn" style="display:none"></div>
+      <div id="credList"></div>
+      <h3 style="margin-top:14px">添加凭据</h3>
+      <div class="cred-row">
+        <input type="text" id="credName" placeholder="名称(如 personal)">
+        <input type="text" id="credApiBase" value="https://api.github.com" placeholder="https://api.github.com">
+      </div>
+      <div class="cred-row">
+        <input type="password" id="credToken" placeholder="GitHub token">
+      </div>
+      <button class="btn small" id="btnAddCred">添加</button>
+      <p class="mono" style="margin:10px 0 0" id="credHint"></p>
+    </div>
+    <div class="setting-group">
+      <h3 id="sLangTitle">语言</h3>
+      <select id="cfgLang">
+        <option value="auto">跟随浏览器</option>
+        <option value="zh">中文</option>
+        <option value="en">English</option>
+      </select>
+      <div class="btn-row"><button class="btn" id="btnSaveSettings">保存设置</button></div>
+    </div>
+  </div>
+</main>
+
+<!-- 发版弹窗 -->
+<div class="modal-back" id="releaseModal">
+  <div class="modal">
+    <h3 id="relTitle">发布新版本</h3>
+    <label id="relRepoLabel">仓库</label>
+    <input type="text" id="relRepo" disabled>
+    <label id="relVerLabel">版本号 (如 v1.0.0)</label>
+    <input type="text" id="relVersion" placeholder="v1.0.0">
+    <div class="btn-row">
+      <button class="btn" id="relSubmit">发布</button>
+      <button class="btn ghost" id="relCancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+var L = null;         // 文案字典(后端传)
+var SETTINGS = null;
+var CLOUD = {};       // name -> {actions, release}
+var REPOS = [];
+
+/* ---------- 安全转义(采用修复后的双保险模式) ---------- */
+function esc(s) {
+  return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+function escAttr(s) {
+  return esc(s).replace(/'/g,"&#39;").replace(/"/g,"&quot;");
+}
+function jsStr(s) {
+  return JSON.stringify(String(s == null ? "" : s)).replace(/</g,"\\u003c").replace(/>/g,"\\u003e").replace(/&/g,"\\u0026");
+}
+function $(id) { return document.getElementById(id); }
+
+/* ---------- 提示 ---------- */
+var bannerTimer = null;
+function showBanner(msg, isOk) {
+  var b = $("banner");
+  b.style.display = "block";
+  b.className = isOk ? "ok" : "warn";
+  b.innerHTML = esc(msg);
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(function(){ b.style.display = "none"; }, 4000);
+}
+
+/* ---------- API ---------- */
+function api(path, opts) {
+  opts = opts || {};
+  return fetch(path, {
+    method: opts.method || "GET",
+    headers: opts.headers || {},
+    body: opts.body
+  }).then(function(r){
+    return r.json().catch(function(){ return { error: "bad response" }; });
+  }).catch(function(e){ return { error: e.message }; });
+}
+
+/* ---------- 状态徽章 ---------- */
+function badgeFor(run) {
+  if (!run) return '<span class="badge na">' + esc(L.status_na) + "</span>";
+  if (run.status === "completed") {
+    var ok = run.conclusion === "success";
+    return '<span class="badge ' + (ok ? "ok" : "fail") + '">' +
+      esc(ok ? L.status_success : (run.conclusion || L.status_failure)) + " #" + esc(run.run_number) + "</span>";
+  }
+  return '<span class="badge run">' + esc(L.status_running) + " #" + esc(run.run_number) + "</span>";
+}
+
+/* ---------- 加载总览 ---------- */
+function loadOverview() {
+  $("loading").style.display = "block";
+  $("reposWrap").style.display = "none";
+  api("/api/overview").then(function(d){
+    if (d.error) { showBanner(L.load_failed + d.error, false); return; }
+    L = d.lang === "zh" ? ZH : EN;
+    applyLang();
+    REPOS = d.repos || [];
+    CLOUD = d.cloud || {};
+    $("noCredsWarn").style.display = d.has_credentials ? "none" : "block";
+    $("noCredsWarn").innerHTML = esc(L.no_creds_warn);
+    renderRepos();
+    $("loading").style.display = "none";
+    $("reposWrap").style.display = "block";
+  });
+}
+
+function renderRepos() {
+  var tb = $("reposBody");
+  var rows = "";
+  REPOS.forEach(function(r){
+    var cloud = CLOUD[r.name] || {};
+    var head = r.head;
+    var aheadTxt = head && head.ahead > 0 ? head.ahead : "";
+    var aheadCls = head && head.ahead > 0 ? "fail" : "na";
+    var dirty = r.status ? (r.status.changed + r.status.untracked) : 0;
+    var dirtyTxt = dirty > 0 ? (dirty + " 个改动") : "干净";
+    var dirtyCls = dirty > 0 ? "run" : "ok";
+    var rel = cloud.release;
+    var relTxt = rel ? esc(rel.tag_name) : L.status_na;
+    var relLink = rel && rel.html_url;
+    var pathAttr = escAttr(jsStr(r.path));
+    rows += "<tr>" +
+      "<td><strong>" + esc(r.name) + "</strong><br><span class='mono'>" + esc(r.path) + "</span></td>" +
+      "<td class='mono'>" + (head ? esc(head.local) : "—") + (head && head.branch ? "<br>" + esc(head.branch) : "") + "</td>" +
+      "<td class='mono'>" + (head && head.remote ? esc(head.remote) : "—") + "</td>" +
+      "<td><span class='badge " + aheadCls + "'>" + esc(aheadTxt || "0") + "</span></td>" +
+      "<td>" + badgeFor(cloud.actions) + "</td>" +
+      "<td>" + (relLink ? "<a href='" + escAttr(relLink) + "' target='_blank'>" + relTxt + "</a>" : relTxt) + "</td>" +
+      "<td><span class='badge " + dirtyCls + "'>" + esc(dirtyTxt) + "</span></td>" +
+      "<td><button class='btn small' onclick='openRelease(" + pathAttr + ")'>" + esc(L.btn_release) + "</button></td>" +
+      "</tr>";
+  });
+  tb.innerHTML = rows;
+  $("noRepos").style.display = REPOS.length ? "none" : "block";
+  $("noRepos").innerHTML = esc(L.no_repos_found);
+}
+
+/* ---------- 设置 ---------- */
+function loadSettings() {
+  api("/api/settings").then(function(d){
+    if (d.error) { showBanner(L.load_failed + d.error, false); return; }
+    SETTINGS = d;
+    $("cfgRootDirs").value = (d.root_dirs || []).join("\n");
+    $("cfgManualRepos").value = (d.manual_repos || []).join("\n");
+    $("cfgLang").value = d.language || "auto";
+    renderCreds(d.credentials || []);
+  });
+}
+
+function renderCreds(creds) {
+  var el = $("credList");
+  var html = "";
+  creds.forEach(function(c){
+    html += "<div class='cred-row'>" +
+      "<input type='text' value='" + escAttr(c.name) + "' disabled>" +
+      "<input type='text' value='" + escAttr(c.api_base) + "' disabled>" +
+      "<span class='mono'>" + (c.auto ? "auto" : c.has_token ? "✓ token" : "no token") + (c.default ? " (default)" : "") + "</span>" +
+      "<button class='btn small danger' onclick='removeCred(" + escAttr(jsStr(c.name)) + "," + escAttr(jsStr(c.api_base)) + ")'>" + esc(L.btn_delete) + "</button>" +
+      "</div>";
+  });
+  el.innerHTML = html || '<span class="mono">' + esc(L.status_na) + "</span>";
+}
+
+function saveSettings() {
+  var rootDirs = $("cfgRootDirs").value.split("\n").map(function(s){return s.trim();}).filter(Boolean);
+  var manual = $("cfgManualRepos").value.split("\n").map(function(s){return s.trim();}).filter(Boolean);
+  var lang = $("cfgLang").value;
+  api("/api/settings", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({root_dirs: rootDirs, manual_repos: manual, language: lang})})
+    .then(function(d){ if (d.ok) { showBanner("已保存", true); loadSettings(); loadOverview(); } else showBanner(d.error || "失败", false); });
+}
+
+function addCred() {
+  var name = $("credName").value.trim();
+  var apiBase = $("credApiBase").value.trim() || "https://api.github.com";
+  var token = $("credToken").value.trim();
+  api("/api/settings", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({cred_action:"add", name: name, api_base: apiBase, token: token})})
+    .then(function(d){
+      if (d.ok) { showBanner("已添加凭据", true); $("credToken").value=""; loadSettings(); }
+      else showBanner(d.error || "失败", false);
+    });
+}
+function removeCred(name, apiBase) {
+  api("/api/settings", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({cred_action:"remove", name: name, api_base: apiBase})})
+    .then(function(d){ if (d.ok) { loadSettings(); } else showBanner(d.error || "失败", false); });
+}
+
+/* ---------- 发版 ---------- */
+var releasePath = null;
+function openRelease(path) { releasePath = path; $("releaseModal").style.display = "flex"; $("relVersion").value = ""; }
+function submitRelease() {
+  var ver = $("relVersion").value.trim();
+  var repo = REPOS.filter(function(r){ return r.path === releasePath; })[0];
+  if (!repo) return;
+  if (!confirm(L.release_confirm.replace("%s", repo.name).replace("%s", ver))) return;
+  $("relSubmit").disabled = true;
+  api("/api/release", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({path: releasePath, version: ver})})
+    .then(function(d){
+      $("relSubmit").disabled = false;
+      $("releaseModal").style.display = "none";
+      if (d.ok) { showBanner(d.msg, true); loadOverview(); }
+      else showBanner(d.error || d.msg || "发布失败", false);
+    });
+}
+
+/* ---------- 语言 ---------- */
+var ZH = {
+  app_title: "GitHub 多仓库管理器", tab_repos: "仓库", tab_settings: "设置",
+  btn_refresh: "刷新", btn_release: "发版",
+  status_success: "成功", status_failure: "失败", status_running: "运行中", status_na: "—",
+  no_repos_found: "未发现仓库。请在设置中配置扫描根目录或手工添加仓库。",
+  no_creds_warn: "未配置凭据: 私有仓库与 Actions/Release 不可用。可复用 gh CLI 登录(推荐)或添加 token。",
+  load_failed: "加载失败: ",
+  release_confirm: "确认对 %s 打 tag %s 并推送触发构建?",
+  settings: { roots: "扫描根目录", roots_label: "每行一个目录路径, 递归扫描其下的 git 仓库",
+    manual: "手工仓库", manual_label: "每行一个仓库绝对路径",
+    cred: "凭据", lang: "语言", save: "保存设置",
+    cred_hint: "自动复用 gh CLI 登录; 或设置环境变量 GITHUB_TOKEN; 或在上面手动添加 token。" },
+};
+var EN = {
+  app_title: "GitHub Repo Manager", tab_repos: "Repos", tab_settings: "Settings",
+  btn_refresh: "Refresh", btn_release: "Release",
+  status_success: "success", status_failure: "failure", status_running: "running", status_na: "—",
+  no_repos_found: "No repos found. Configure scan roots or manual repos in Settings.",
+  no_creds_warn: "No credentials: private repos, Actions and Releases unavailable. Reuse gh CLI login (recommended) or add a token.",
+  load_failed: "Load failed: ",
+  release_confirm: "Tag %s on %s and push to trigger build?",
+  settings: { roots: "Scan root dirs", roots_label: "One directory per line; git repos under it are scanned",
+    manual: "Manual repos", manual_label: "One absolute path per line",
+    cred: "Credentials", lang: "Language", save: "Save settings",
+    cred_hint: "Reuses gh CLI login automatically; or set GITHUB_TOKEN env; or add a token above." },
+};
+
+function applyLang() {
+  if (!L) return;
+  $("appTitle").textContent = L.app_title;
+  $("tabRepos").textContent = L.tab_repos;
+  $("tabSettings").textContent = L.tab_settings;
+  $("btnRefresh").textContent = L.btn_refresh;
+  $("hRepo").textContent = "仓库"; $("hLocal").textContent = "本地"; $("hRemote").textContent = "远端";
+  $("hAhead").textContent = "未推送"; $("hActions").textContent = "Actions";
+  $("hRelease").textContent = "最新版本"; $("hDirty").textContent = "本地改动";
+  $("sRootsTitle").textContent = L.settings.roots; $("lRoots").textContent = L.settings.roots_label;
+  $("sManualTitle").textContent = L.settings.manual; $("lManual").textContent = L.settings.manual_label;
+  $("sCredTitle").textContent = L.settings.cred; $("sLangTitle").textContent = L.settings.lang;
+  $("btnSaveSettings").textContent = L.settings.save; $("credHint").textContent = L.settings.cred_hint;
+  $("btnAddCred").textContent = "添加"; $("relTitle").textContent = "发布新版本";
+  $("relRepoLabel").textContent = "仓库"; $("relVerLabel").textContent = "版本号 (如 v1.0.0)";
+  $("relSubmit").textContent = "发布"; $("relCancel").textContent = "取消";
+}
+
+/* ---------- 初始化 ---------- */
+document.addEventListener("DOMContentLoaded", function(){
+  L = ZH; applyLang();
+  $("btnRefresh").addEventListener("click", loadOverview);
+  $("btnSaveSettings").addEventListener("click", saveSettings);
+  $("btnAddCred").addEventListener("click", addCred);
+  $("relSubmit").addEventListener("click", submitRelease);
+  $("relCancel").addEventListener("click", function(){ $("releaseModal").style.display = "none"; });
+  $("tabRepos").addEventListener("click", function(){
+    $("viewRepos").style.display = "block"; $("viewSettings").style.display = "none";
+    $("tabRepos").classList.add("active"); $("tabSettings").classList.remove("active");
+  });
+  $("tabSettings").addEventListener("click", function(){
+    $("viewRepos").style.display = "none"; $("viewSettings").style.display = "block";
+    $("tabSettings").classList.add("active"); $("tabRepos").classList.remove("active");
+    loadSettings();
+  });
+  api("/api/settings").then(function(d){
+    var lang = (d && d.language) || "auto";
+    if (lang === "en" || (lang === "auto" && (navigator.language || "").toLowerCase().indexOf("zh") !== 0)) { L = EN; applyLang(); }
+    loadOverview();
+  });
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+# 配置与敏感信息
+config.json
+*.token
+token.txt
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 构建产物
+dist/
+build/
+*.spec
+
+# 运行时数据
+*.log
+server.log
+
+# 系统
+Thumbs.db
+.DS_Store
