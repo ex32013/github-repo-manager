@@ -10,6 +10,7 @@
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -87,11 +88,22 @@ def pick_credential(creds, api_base, owner):
 
 
 def _owner_from_url(remote_url):
-    """从 remote url 提取 owner (宽松匹配, 失败返回 None)。"""
+    """从 remote url 提取 owner (宽松匹配, 失败返回 None)。
+    支持 ssh: git@github.com:owner/repo.git; https: https://host/owner/repo.git。"""
     u = (remote_url or "").strip()
-    u = u.replace("git@", "").replace("://", "/")
-    parts = [p for p in u.split("/") if p]
-    if len(parts) >= 2 and parts[-2] not in ("",):
+    if not u:
+        return None
+    if u.startswith("git@"):
+        rest = u[4:]
+        path = rest.split(":", 1)[1] if ":" in rest else ""
+    elif "://" in u:
+        m = re.search(r"://[^/]+/(.+)$", u)
+        path = m.group(1) if m else ""
+    else:
+        path = u
+    path = path.rstrip("/").rstrip(".git")
+    parts = [p for p in path.split("/") if p]
+    if len(parts) >= 2:
         return parts[-2]
     return None
 
@@ -172,13 +184,41 @@ class GitHubClient:
                  "published_at": x.get("published_at"), "html_url": x.get("html_url"),
                  "assets": len(x.get("assets") or [])} for x in data]
 
+    def _get_paged(self, path_fmt, per_page=100, max_pages=10):
+        """自动翻页收集。path_fmt 需含 {page} 占位, 如 '/user/repos?per_page={per_page}&page={page}'。"""
+        items = []
+        page = 1
+        while page <= max_pages:
+            path = path_fmt.format(page=page, per_page=per_page)
+            data = self.get(path)
+            if not isinstance(data, list) or not data:
+                break
+            items.extend(data)
+            if len(data) < per_page:
+                break
+            page += 1
+        return items
+
     def list_user_repos(self, per_page=100):
-        data = self.get("/user/repos?per_page=%d&sort=updated" % per_page)
-        if not isinstance(data, list):
-            return []
+        """列出当前凭据可见的所有仓库(自动分页)。"""
+        data = self._get_paged(
+            "/user/repos?sort=updated&per_page={per_page}&page={page}", per_page=per_page)
         return [{"full_name": x.get("full_name"), "default_branch": x.get("default_branch"),
                  "private": x.get("private"), "updated_at": x.get("updated_at"),
-                 "html_url": x.get("html_url")} for x in data]
+                 "html_url": x.get("html_url"),
+                 "clone_url": x.get("clone_url"),
+                 "ssh_url": x.get("ssh_url"),
+                 "description": x.get("description"),
+                 "language": x.get("language"),
+                 "stargazers_count": x.get("stargazers_count", 0)} for x in data]
+
+    def repo_details(self, owner, repo):
+        """单个仓库详情(含 clone_url, 用于一键克隆)。"""
+        data = self.get("/repos/%s/%s" % (owner, repo))
+        return {"full_name": data.get("full_name"), "default_branch": data.get("default_branch"),
+                "private": data.get("private"), "clone_url": data.get("clone_url"),
+                "ssh_url": data.get("ssh_url"), "language": data.get("language"),
+                "description": data.get("description")}
 
 
 def build_clients(creds, api_base=None, owner=None):

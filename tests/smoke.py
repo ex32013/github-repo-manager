@@ -96,15 +96,47 @@ def main():
         # 8. token 校验: 无 token 的写操作... 本机模式无 token 也放行(设计如此), 只验证不 500
         st, _ = http("/api/release", method="POST", body=json.dumps({"path": "/nonexist", "version": "v9.9.9"}),
                      headers={"Content-Type": "application/json"})
-        if st != 404:
-            fails.append("不存在仓库发版应404, 实际 %d" % st)
+        if st != 200:  # 批量发版接口对不存在仓库返回 200 + ok:False
+            fails.append("不存在仓库发版应200(ok:false), 实际 %d" % st)
+
+        # 9. 批量发版: 空列表应 400
+        st, _ = http("/api/release", method="POST", body=json.dumps({"paths": [], "version": "v9.9.9"}),
+                     headers={"Content-Type": "application/json"})
+        if st != 400:
+            fails.append("空paths发版应400, 实际 %d" % st)
+
+        # 10. 云端仓库接口: 无凭据时返回结构合法
+        st, body = http("/api/cloud-repos")
+        if st != 200:
+            fails.append("/api/cloud-repos 状态码 %d" % st)
+        else:
+            d = json.loads(body)
+            if not isinstance(d.get("repos"), list):
+                fails.append("cloud-repos.repos 不是列表")
+            if "has_credentials" not in d:
+                fails.append("cloud-repos 缺 has_credentials")
+
+        # 11. 克隆接口: 非法 url 不 500
+        st, _ = http("/api/clone", method="POST", body=json.dumps({"url": "", "dir": ""}),
+                     headers={"Content-Type": "application/json"})
+        if st != 400:
+            fails.append("空url克隆应400, 实际 %d" % st)
+
+        # 12. config 接口返回 home_dir
+        st, body = http("/api/config")
+        if st != 200:
+            fails.append("/api/config 状态码 %d" % st)
+        else:
+            d = json.loads(body)
+            if not d.get("home_dir"):
+                fails.append("config 缺 home_dir")
 
         if fails:
             print("SMOKE FAILED:")
             for f in fails:
                 print("  -", f)
             sys.exit(1)
-        print("SMOKE OK: 主页/API/CSRF/body限制/容错 全部通过")
+        print("SMOKE OK: 主页/API/CSRF/body限制/批量/云端/克隆 全部通过")
     finally:
         srv.shutdown()
 

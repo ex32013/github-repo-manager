@@ -1,0 +1,155 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号(仅手动触发时需要, 例如 v1.0.1)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            exe: github-repo-manager-linux
+            artifact: linux-binaries
+          - os: windows-latest
+            exe: github-repo-manager.exe
+            artifact: windows-binaries
+          - os: macos-latest
+            exe: github-repo-manager-macos-arm64
+            artifact: macos-binaries
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}   # 锁定触发时的 commit, 防止 tag 移动导致内容不一致
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: python -m pip install pyinstaller==6.14.0
+
+      # 冒烟测试: 源码模式启动服务器验证关键接口(在打包前拦截回归)
+      - name: Smoke test
+        run: python tests/smoke.py
+
+      - name: Build (Windows)
+        run: |
+          python -m PyInstaller --onefile --name "$env:MATRIX_EXE" `
+            --add-data "index.html;." `
+            server.py
+        shell: pwsh
+        if: runner.os == 'Windows'
+        env:
+          MATRIX_EXE: ${{ matrix.exe }}
+
+      - name: Build (Unix)
+        run: |
+          python -m PyInstaller --onefile --name "${{ matrix.exe }}" \
+            --add-data "index.html:." \
+            server.py
+        shell: bash
+        if: runner.os != 'Windows'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.exe }}
+          if-no-files-found: error
+
+      # 冒烟断言: 打包产物能启动且主页返回
+      - name: Smoke test packaged binary (Unix)
+        run: |
+          EXE="dist/${{ matrix.exe }}"
+          chmod +x "$EXE"
+          "$EXE" --port 18992 --no-browser &
+          SRV=$!
+          trap 'kill $SRV 2>/dev/null || true' EXIT
+          for i in $(seq 1 20); do
+            if curl -sf -o /dev/null http://127.0.0.1:18992/; then
+              echo "PACKAGED SMOKE OK"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "PACKAGED SMOKE FAILED: exe did not serve / in time"
+          exit 1
+        shell: bash
+        if: runner.os != 'Windows'
+
+      - name: Smoke test packaged binary (Windows)
+        run: |
+          Start-Process -FilePath "dist/$env:MATRIX_EXE" -ArgumentList "--port 18992 --no-browser"
+          try {
+            for ($i = 0; $i -lt 20; $i++) {
+              Start-Sleep -Seconds 1
+              try {
+                $r = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:18992/" -TimeoutSec 3
+                if ($r.StatusCode -eq 200) { Write-Host "PACKAGED SMOKE OK"; exit 0 }
+              } catch {}
+            }
+            Write-Host "PACKAGED SMOKE FAILED: exe did not serve / in time"
+            exit 1
+          } finally {
+            Get-Process | Where-Object { $_.ProcessName -like "*repo-manager*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+          }
+        shell: pwsh
+        if: runner.os == 'Windows'
+        env:
+          MATRIX_EXE: ${{ matrix.exe }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # 仅此 job 需要写 Release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}   # 锁定触发时的 commit, 防止 tag 移动导致内容不一致
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # 仅 tag 触发或提供了 version 输入时才允许发布; 防止手动触发误把分支名当 tag
+      - name: Determine tag name
+        id: tag
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "TAG=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "TAG=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "TAG=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        if: steps.tag.outputs.TAG != ''
+        with:
+          tag_name: ${{ steps.tag.outputs.TAG }}
+          name: ${{ steps.tag.outputs.TAG }}
+          generate_release_notes: true
+          files: |
+            artifacts/*
+            README.md

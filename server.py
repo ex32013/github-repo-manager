@@ -26,6 +26,13 @@ INDEX_PATH = os.path.join(ROOT, "index.html")
 MAX_BODY = 1024 * 1024
 SESSION_TOKEN = secrets.token_urlsafe(16)
 
+
+def _resource_dir():
+    """打包后静态资源位置(sys._MEIPASS); 源码运行即项目目录。"""
+    if getattr(sys, "frozen", False):
+        return getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    return ROOT
+
 # 请求超时防护(线程级)
 import socket
 socket.setdefaulttimeout(30)
@@ -89,7 +96,7 @@ class Handler(BaseHTTPRequestHandler):
             return {}
 
     def _index_html(self):
-        with open(INDEX_PATH, "r", encoding="utf-8") as f:
+        with open(os.path.join(_resource_dir(), "index.html"), "r", encoding="utf-8") as f:
             return f.read()
 
     # ---- HTTP ----
@@ -105,7 +112,8 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         if path == "/api/config":
-            self._json({"session_token": SESSION_TOKEN})
+            self._json({"session_token": SESSION_TOKEN,
+                        "home_dir": os.path.expanduser("~")})
             return
         if path == "/api/settings":
             self._json(self._public_settings())
@@ -117,6 +125,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/overview":
             # 仓库 + Actions + Release 汇总(Phase 1 核心)
             self._json(self._overview())
+            return
+        if path == "/api/cloud-repos":
+            # 远端仓库模式: 列出凭据可见的所有仓库, 标注是否本地已克隆
+            self._json(self._cloud_repos())
             return
         self.send_error(404)
 
@@ -137,6 +149,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/release":
             self._do_release(body)
+            return
+        if path == "/api/clone":
+            self._do_clone(body)
             return
         self.send_error(404)
 
@@ -230,16 +245,95 @@ class Handler(BaseHTTPRequestHandler):
 
     def _do_release(self, body):
         cfg = config.load()
-        repo_path = body.get("path")
+        paths = body.get("paths")
+        repo_paths = paths if isinstance(paths, list) else ([body.get("path")] if body.get("path") else [])
         version = body.get("version")
-        # 找到对应本地仓库
-        repos = repo_scanner.discover(cfg)
-        target = next((r for r in repos if r.get("path") == repo_path), None)
-        if not target:
-            self._json({"ok": False, "error": "仓库不存在: %s" % repo_path}, 404)
+        if not repo_paths:
+            self._json({"ok": False, "error": "缺少仓库"}, 400)
             return
-        ok, msg = release.release(target, version)
-        self._json({"ok": ok, "msg": msg})
+        repos = repo_scanner.discover(cfg)
+        results = []
+        for repo_path in repo_paths:
+            target = next((r for r in repos if r.get("path") == repo_path), None)
+            if not target:
+                results.append({"path": repo_path, "ok": False, "error": "仓库不存在"})
+                continue
+            ok, msg = release.release(target, version)
+            results.append({"path": repo_path, "name": target.get("name"), "ok": ok, "msg": msg})
+        all_ok = all(r["ok"] for r in results)
+        self._json({"ok": all_ok, "results": results})
+
+    def _cloud_repos(self):
+        """远端仓库模式: 列出凭据可见的所有云端仓库, 标注本地是否已克隆。
+        无凭据时返回空列表 + has_credentials=False。"""
+        cfg = config.load()
+        creds = github_api.discover_credentials(cfg.get("credentials"))
+        local_remotes = self._local_remote_set(cfg)
+        results = []
+        seen = set()
+        if creds:
+            for cred in creds:
+                base = cred.get("api_base") or "https://api.github.com"
+                tok = github_api.resolve_token(cred)
+                client = github_api.GitHubClient(base, token=tok)
+                try:
+                    repos = client.list_user_repos()
+                except github_api.APIError:
+                    continue
+                for r in repos:
+                    full = r.get("full_name")
+                    if not full or full in seen:
+                        continue
+                    seen.add(full)
+                    results.append({
+                        "full_name": full,
+                        "name": full.split("/", 1)[-1],
+                        "private": r.get("private"),
+                        "updated_at": r.get("updated_at"),
+                        "language": r.get("language"),
+                        "stars": r.get("stargazers_count"),
+                        "html_url": r.get("html_url"),
+                        "clone_url": r.get("clone_url"),
+                        "ssh_url": r.get("ssh_url"),
+                        "cloned": full in local_remotes,
+                    })
+        results.sort(key=lambda x: (not x["cloned"], x["name"].lower()))
+        return {"repos": results, "has_credentials": bool(creds),
+                "api_bases": sorted({c.get("api_base") or "https://api.github.com" for c in creds})}
+
+    @staticmethod
+    def _local_remote_set(cfg):
+        """本地已克隆仓库的 owner/repo 集合(按 remote url 归一化)。"""
+        out = set()
+        for repo in repo_scanner.discover(cfg):
+            _, owner, name = repo_scanner.repo_identity(repo)
+            if owner and name:
+                out.add("%s/%s" % (owner, name))
+        return out
+
+    def _do_clone(self, body):
+        """一键克隆: git clone <url> <dir>。目录默认到 ~/projects/<full_name>。"""
+        import subprocess as _sp
+        url = (body.get("url") or "").strip()
+        target = (body.get("dir") or "").strip()
+        if not url:
+            self._json({"ok": False, "error": "缺少 clone url"}, 400)
+            return
+        if not target:
+            full = body.get("full_name") or url.rstrip("/").rstrip(".git").split("/")[-1]
+            target = os.path.join(os.path.expanduser("~"), "projects", full)
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            r = _sp.run(["git", "clone", "--", url, target], capture_output=True,
+                        text=True, timeout=300, encoding="utf-8", errors="replace")
+        except Exception as e:
+            self._json({"ok": False, "error": "克隆失败: %s" % e})
+            return
+        if r.returncode != 0:
+            self._json({"ok": False, "error": "克隆失败: " + (r.stderr or r.stdout or "").strip()[:300]})
+            return
+        self._json({"ok": True, "msg": "已克隆到 " + target})
+
 
 
 def _find_free_port(start):

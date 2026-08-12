@@ -9,16 +9,20 @@ Manage all your GitHub repositories from one local web UI — repo overview, Act
 - **Repo overview** — scans local git repos, shows local/remote commit, unpushed commits, dirty state
 - **Actions status** — latest workflow run per repo (success/failure/running)
 - **Releases** — latest version per repo with link
-- **One-click release** — tag + push to trigger your release workflow
+- **Cloud mode** — lists all repos under your credentials, marks which are cloned, one-click clone
+- **One-click release** — tag + push to trigger your release workflow (single or batch)
 - **Multi-platform** — Windows / Linux / macOS (requires only Python 3.8+ and git)
 - **Zero dependencies** — standard library only, no pip installs needed
+- **Multi-account / GHE-ready** — multiple credentials, `api_base` parameterized for GitHub Enterprise
 
 - **仓库总览** — 扫描本地 git 仓库，显示本地/远端 commit、未推送提交、本地改动
 - **Actions 巡检** — 每仓库最新 workflow 状态（成功/失败/运行中）
 - **Release 一览** — 每仓库最新版本
-- **一键发版** — 打 tag + push，触发你的 release workflow
+- **云端模式** — 列出凭据下所有仓库，标注本地是否已克隆，支持一键克隆
+- **一键发版** — 打 tag + push（单仓库或勾选批量），触发你的 release workflow
 - **多平台** — Windows / Linux / macOS（只需 Python 3.8+ 和 git）
 - **零依赖** — 只用标准库，无需 pip 安装任何包
+- **多账号 / 预留 GHE** — 支持多凭据，`api_base` 参数化可指向 GitHub Enterprise
 
 ## Quick start / 快速开始
 
@@ -53,7 +57,9 @@ Without credentials: public repos' Actions/Releases are unavailable; private rep
 | POST | `/api/settings` | save settings / add / remove credential |
 | GET | `/api/repos` | local repo scan / 本地仓库扫描 |
 | GET | `/api/overview` | repos + Actions + Releases summary / 总览 |
-| POST | `/api/release` | tag + push a version / 打 tag 发版 |
+| GET | `/api/cloud-repos` | cloud repos under credentials (cloned marked) / 云端仓库 |
+| POST | `/api/clone` | git clone a cloud repo / 一键克隆 |
+| POST | `/api/release` | tag + push a version (single or batch) / 打 tag 发版 |
 
 ## Security / 安全
 
@@ -73,13 +79,17 @@ Without credentials: public repos' Actions/Releases are unavailable; private rep
 ├── config.py           # config persistence (credentials, roots, language)
 ├── i18n.py             # zh/en strings
 ├── index.html          # single-page frontend
-└── tests/smoke.py      # smoke tests
+├── tests/
+│   ├── smoke.py        # smoke tests (HTTP API)
+│   └── unit.py         # unit tests (credential matching, URL parsing)
+└── .github/workflows/release.yml  # build exe + CI
 ```
 
 ## Development / 开发
 
 ```bash
 python tests/smoke.py   # run smoke tests
+python tests/unit.py    # run unit tests
 ```
 
 ## License
