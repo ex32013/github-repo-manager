@@ -20,7 +20,14 @@ PORT = 18995
 
 def start_server():
     import server
-    srv = server.ThreadingHTTPServer(("127.0.0.1", PORT), server.Handler)
+    try:
+        srv = server.ThreadingHTTPServer(("127.0.0.1", PORT), server.Handler)
+    except OSError as e:
+        print("FATAL: 无法绑定端口 %d: %s" % (PORT, e))
+        print("当前占用 18995 端口的进程:")
+        if os.name == "nt":
+            os.system('netstat -ano | findstr ":%d"' % PORT)
+        sys.exit(3)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
 
@@ -145,4 +152,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import sys as _s
+    print("PY=%s OS=%s CWD=%s" % (_s.version.split()[0], os.name, os.getcwd()))
     main()
