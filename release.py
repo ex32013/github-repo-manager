@@ -15,7 +15,9 @@ def _git(root, args, timeout=60):
         return -1, "", str(e)
 
 
-TAG_RE = re.compile(r"^v?\d+\.\d+\.\d+(?:[-.][0-9A-Za-z]+)*$")
+# 与 .github/workflows/release.yml 的 Determine tag name 校验保持一致(严格 v1.2.3, 不带后缀)。
+# 若两边不一致, 工具会打出一个 workflow 拒绝的后缀 tag, 造成"假发布"。
+TAG_RE = re.compile(r"^v?\d+\.\d+\.\d+$")
 
 
 def validate_version(version):

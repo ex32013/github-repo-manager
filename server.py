@@ -323,7 +323,7 @@ class Handler(BaseHTTPRequestHandler):
             full = body.get("full_name") or url.rstrip("/").rstrip(".git").split("/")[-1]
             target = os.path.join(os.path.expanduser("~"), "projects", full)
         try:
-            os.makedirs(os.path.dirname(target), exist_ok=True)
+            os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
             r = _sp.run(["git", "clone", "--", url, target], capture_output=True,
                         text=True, timeout=300, encoding="utf-8", errors="replace")
         except Exception as e:
